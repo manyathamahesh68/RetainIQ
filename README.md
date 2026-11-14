@@ -92,3 +92,34 @@ RetainIQ/
 Open your terminal in the project root folder and install the required packages:
 ```powershell
 python -m pip install pandas numpy scikit-learn plotly streamlit joblib
+```
+
+### Saved-model prediction service
+
+The shared inference service in `src/prediction_service.py` uses the four saved
+preprocessing-and-classifier pipelines in `models/` and the matching
+validation-selected thresholds in `models/evaluation_results.json`. It does not
+train models, select new thresholds, or use test data. The separate
+`models/preprocessor.pkl` is preserved; inference uses the preprocessor bundled
+inside each saved model pipeline.
+
+Pass a pandas DataFrame containing all 19 feature columns listed in
+`src/preprocessing.py`. `customerID` is optional and is preserved in the
+results when supplied. Do not include the `Churn` target column. Numeric and
+categorical input types are checked; missing feature values are reported and
+handled only by the imputers already fitted in the saved pipelines. The
+returned churn scores are model outputs and are not asserted to be calibrated
+probabilities.
+
+```python
+import pandas as pd
+
+from src.prediction_service import load_prediction_assets, predict_customers
+
+assets = load_prediction_assets()
+customer_rows = pd.read_csv("your_customers.csv")
+batch = predict_customers(customer_rows, "Logistic Regression", assets)
+
+print(batch.results)
+print("Missing values handled by the saved pipeline:", batch.missing_value_counts)
+```
