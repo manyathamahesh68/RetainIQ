@@ -1,0 +1,15 @@
+.streamlit/secrets.toml
+# Python environment and cache
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Streamlit credentials
+.streamlit/secrets.toml
+
+# Backups
+.agent_backups/
+app_backup.py
+app_before_login.py
+app_before_redesign.py

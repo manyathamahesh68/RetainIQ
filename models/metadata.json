@@ -1,0 +1,73 @@
+{
+  "trained_at": "2026-11-14T18:10:35",
+  "sklearn_version": "1.9.1",
+  "random_state": 42,
+  "feature_columns": [
+    "SeniorCitizen",
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "gender",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod"
+  ],
+  "split_sizes": {
+    "train": 4225,
+    "validation": 1409,
+    "test": 1409
+  },
+  "models": {
+    "Logistic Regression": {
+      "file": "logistic_regression.pkl",
+      "best_params": {
+        "C": "10"
+      },
+      "cv_roc_auc_train": 0.8479,
+      "validation_roc_auc": 0.8357
+    },
+    "Random Forest": {
+      "file": "random_forest.pkl",
+      "best_params": {
+        "n_estimators": "200",
+        "min_samples_leaf": "5",
+        "max_features": "sqrt",
+        "max_depth": "6"
+      },
+      "cv_roc_auc_train": 0.8483,
+      "validation_roc_auc": 0.8386
+    },
+    "Gradient Boosting": {
+      "file": "gradient_boosting.pkl",
+      "best_params": {
+        "subsample": "1.0",
+        "n_estimators": "200",
+        "max_depth": "2",
+        "learning_rate": "0.03"
+      },
+      "cv_roc_auc_train": 0.8508,
+      "validation_roc_auc": 0.8397
+    },
+    "Neural Network": {
+      "file": "neural_network.pkl",
+      "best_params": {
+        "learning_rate_init": "0.003",
+        "hidden_layer_sizes": "(16,)",
+        "alpha": "0.0001"
+      },
+      "cv_roc_auc_train": 0.8428,
+      "validation_roc_auc": 0.8314
+    }
+  }
+}
