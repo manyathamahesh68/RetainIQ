@@ -12,6 +12,13 @@ import plotly.graph_objects as go
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from src.bulk_prediction import (
+    BulkCsvError,
+    format_bulk_results,
+    score_customer_csv,
+)
+from src.prediction_service import PredictionAssets, PredictionInputError
+
 
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_PATH = ROOT_DIR / "data" / "telco_churn.csv"
@@ -707,6 +714,7 @@ page = st.sidebar.radio(
         "Model Comparison",
         "Cost Calculator",
         "Customer Insights",
+        "Bulk CSV Prediction",
     ],
     format_func=lambda label: {
         "Overview": "⌂  Overview",
@@ -714,6 +722,7 @@ page = st.sidebar.radio(
         "Model Comparison": "▥  Model Comparison",
         "Cost Calculator": "＄  Cost Calculator",
         "Customer Insights": "⌁  Customer Insights",
+        "Bulk CSV Prediction": "⇧  Bulk CSV Prediction",
     }[label],
     label_visibility="collapsed",
 )
@@ -1551,4 +1560,93 @@ elif page == "Customer Insights":
         )
         st.caption(
             "These are investigation ideas based on observed patterns, not proven interventions or predictions of ROI."
+        )
+
+
+elif page == "Bulk CSV Prediction":
+    page_heading(
+        "Portfolio scoring",
+        "Bulk CSV Prediction",
+        "Upload customer records to score them with a saved model and its validation-selected threshold.",
+    )
+    st.caption(
+        "Model churn scores are not validated as calibrated probabilities. "
+        "Risk ranks are relative to the uploaded rows and do not imply retention savings."
+    )
+
+    if model_error:
+        st.error(model_error)
+        st.stop()
+    if not models:
+        st.error("No trained models are available.")
+        st.stop()
+    if not eval_data:
+        st.error(evaluation_error or "Saved evaluation thresholds are not available.")
+        st.stop()
+
+    with st.form("bulk_csv_prediction_form"):
+        selected_model_name = st.selectbox(
+            "Prediction model",
+            list(models.keys()),
+            key="bulk_csv_prediction_model",
+        )
+        uploaded_file = st.file_uploader(
+            "Customer CSV (UTF-8; UTF-8 BOM supported)",
+            type=["csv"],
+            key="bulk_csv_prediction_file",
+        )
+        submitted = st.form_submit_button("Score customers", use_container_width=True)
+
+    if submitted:
+        if uploaded_file is None:
+            st.error("Upload a customer CSV before scoring.")
+            st.stop()
+
+        model_evaluation = eval_data.get("models", {}).get(selected_model_name)
+        threshold = model_evaluation.get("threshold") if isinstance(model_evaluation, dict) else None
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            st.error(f"No valid saved threshold is available for {selected_model_name}.")
+            st.stop()
+        threshold = float(threshold)
+        if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            st.error(f"The saved threshold for {selected_model_name} is invalid.")
+            st.stop()
+
+        assets = PredictionAssets(
+            models=models,
+            thresholds={selected_model_name: threshold},
+        )
+        try:
+            batch = score_customer_csv(
+                uploaded_file.getvalue(),
+                selected_model_name,
+                assets,
+            )
+        except BulkCsvError as error:
+            st.error(f"Could not read the uploaded CSV. {error}")
+            st.stop()
+        except PredictionInputError as error:
+            st.error(f"The uploaded CSV does not match the customer feature schema. {error}")
+            st.stop()
+
+        if batch.missing_value_counts:
+            missing_summary = ", ".join(
+                f"{column}: {count}"
+                for column, count in batch.missing_value_counts.items()
+            )
+            st.warning(
+                "Missing feature values were handled by the saved pipeline's fitted imputers. "
+                f"Missing cells: {missing_summary}."
+            )
+
+        display_results = format_bulk_results(batch)
+        metric_columns = st.columns(3)
+        metric_columns[0].metric("Customers scored", len(display_results))
+        metric_columns[1].metric("Selected model", selected_model_name)
+        metric_columns[2].metric("Saved threshold", f"{threshold:.2f}")
+        st.caption("Risk rank 1 is the highest model churn score. Results remain in original CSV row order.")
+        st.dataframe(
+            display_results,
+            width="stretch",
+            hide_index=True,
         )

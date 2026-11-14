@@ -54,6 +54,7 @@ def test_dashboard():
         "Model Comparison",
         "Cost Calculator",
         "Customer Insights",
+        "Bulk CSV Prediction",
     ]
 
     # Verify each page
@@ -96,6 +97,16 @@ def test_dashboard():
                 assert not at.exception, f"Exception on comparison metric {metric}: {at.exception}"
                 assert not at.error, f"st.error on comparison metric {metric}: {[e.value for e in at.error]}"
             print("  ✓ Model comparison metric selector tested successfully.")
+
+        elif page_name == "Bulk CSV Prediction":
+            assert at.file_uploader, "Bulk CSV upload control is missing."
+            assert at.selectbox, "Bulk prediction model selector is missing."
+            at.form[0].button[0].click().run()
+            assert not at.exception, f"Exception on empty bulk submission: {at.exception}"
+            assert any("Upload a customer CSV" in item.value for item in at.error), (
+                "Empty bulk submission did not show an understandable error."
+            )
+            print("  ✓ Bulk CSV upload page rendered successfully.")
 
     at.sidebar.button[0].click().run()
     assert not at.exception, f"Exception on logout: {at.exception}"

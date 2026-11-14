@@ -76,6 +76,8 @@ RetainIQ/
 │
 ├── src/
 │   ├── preprocessing.py
+│   ├── prediction_service.py
+│   ├── bulk_prediction.py
 │   ├── train_models.py
 │   ├── evaluation.py
 │   └── __init__.py
@@ -123,3 +125,30 @@ batch = predict_customers(customer_rows, "Logistic Regression", assets)
 print(batch.results)
 print("Missing values handled by the saved pipeline:", batch.missing_value_counts)
 ```
+
+### Bulk CSV prediction
+
+The **Bulk CSV Prediction** dashboard page scores uploaded UTF-8 CSV files
+(UTF-8 BOM is also supported). Include all 19 feature columns defined in
+`src/preprocessing.py` (in any order):
+
+`SeniorCitizen`, `tenure`, `MonthlyCharges`, `TotalCharges`, `gender`,
+`Partner`, `Dependents`, `PhoneService`, `MultipleLines`, `InternetService`,
+`OnlineSecurity`, `OnlineBackup`, `DeviceProtection`, `TechSupport`,
+`StreamingTV`, `StreamingMovies`, `Contract`, `PaperlessBilling`,
+`PaymentMethod`.
+
+`customerID` is optional, and the `Churn` target column must not be included.
+Blank or missing `customerID` values are rejected. Unexpected or missing
+feature columns are rejected.
+Missing feature values are reported and handled by the imputers already fitted
+in the selected model pipeline. Malformed files and missing or unexpected
+feature columns are rejected with an error.
+
+Select one of the four saved models. Each row is scored with that model's
+existing validation-selected threshold. Results remain in source row order;
+the risk-rank column sorts scores conceptually, with earlier rows winning ties.
+When `customerID` is absent, the customer identifier column uses the
+one-based CSV data-row number (excluding the header). Model churn scores are
+not claimed to be calibrated probabilities, and no retention savings are
+estimated. CSV downloads are not part of this phase.
