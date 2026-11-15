@@ -1,6 +1,20 @@
 # RetainIQ – Cost-Sensitive Customer Retention Intelligence
 
-RetainIQ is an advanced machine learning-based customer churn prediction and cost-sensitive evaluation platform designed for subscription-based and telecommunication companies. 
+## Project Overview
+
+RetainIQ is a cost-sensitive telecom churn prediction and retention intelligence
+platform. It brings together saved-model scoring, validation-selected decision
+thresholds, customer-level explanations, bulk CSV reports, and transparent
+rule-based retention review prompts in a seven-page Streamlit dashboard.
+
+The five completed development phases provide:
+
+1. A shared prediction service for the four saved model pipelines.
+2. Bulk customer CSV scoring.
+3. In-memory downloadable prediction reports.
+4. On-demand SHAP explanations for individual customers.
+5. Rule-based retention review recommendations for the most recently scored
+   individual customer.
 
 ---
 
@@ -20,6 +34,28 @@ RetainIQ solves this by introducing a **cost-sensitive evaluation framework**. I
 3. Performs validation-based **decision threshold optimization** to minimize financial cost rather than blindly using a 0.5 threshold.
 4. Ranks models using an explicitly defined business cost matrix.
 5. Provides an interactive SaaS analytics dashboard to explore churn risks, evaluate models, simulate cost adjustments, and visualize customer insights.
+
+---
+
+## Dashboard Features
+
+The Streamlit dashboard contains seven pages:
+
+1. **Overview** — summarizes the supplied dataset and saved evaluation
+   highlights.
+2. **Customer Churn Prediction** — scores an individual customer with a saved
+   model and its validation-selected threshold; SHAP feature attribution is
+   available on demand.
+3. **Model Comparison** — compares saved model evaluation metrics using the
+   existing evaluation results.
+4. **Cost Calculator** — explores the impact of configurable, illustrative
+   false-negative and false-positive cost assumptions.
+5. **Customer Insights** — presents descriptive customer patterns and global
+   permutation feature importance.
+6. **Retention Intelligence** — displays rule-based review prompts for the
+   most recently scored individual customer, without rescoring.
+7. **Bulk CSV Prediction** — validates and scores uploaded customer records and
+   provides a downloadable CSV report.
 
 ---
 
@@ -73,16 +109,25 @@ RetainIQ/
 │   ├── gradient_boosting.pkl
 │   ├── neural_network.pkl
 │   ├── evaluation_results.json
+│   ├── metadata.json
 │   └── predictions.pkl
 │
 ├── src/
 │   ├── preprocessing.py
 │   ├── prediction_service.py
 │   ├── bulk_prediction.py
+│   ├── explainability.py
+│   ├── retention_engine.py
 │   ├── train_models.py
 │   ├── evaluation.py
-│   ├── explainability.py
 │   └── __init__.py
+│
+├── tests/
+│   ├── test_prediction_service.py
+│   ├── test_bulk_prediction.py
+│   ├── test_explainability.py
+│   ├── test_retention_engine.py
+│   └── smoke_test_app.py
 │
 ├── app.py
 ├── requirements.txt
@@ -90,15 +135,25 @@ RetainIQ/
 
 ---
 
-## 🚀 Installation & Execution Instructions
+## Installation and Execution
 
-### 1. Install Dependencies
-Open your terminal in the project root folder and install the required packages:
+Open Windows PowerShell in the project root. Create and activate the virtual
+environment, install the project dependencies, and start the dashboard:
+
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+streamlit run app.py
 ```
 
-### Saved-model prediction service
+The application requires authentication secrets configured for Streamlit under
+the `[auth]` section, with `email` and `password` values. For local development,
+these can be configured in `.streamlit/secrets.toml`. Configure the secrets
+before running the dashboard or smoke test. Never commit real credentials or
+the secrets file to source control.
+
+### Saved-model prediction sergit diff --checkvice
 
 The shared inference service in `src/prediction_service.py` uses the four saved
 preprocessing-and-classifier pipelines in `models/` and the matching
@@ -184,3 +239,49 @@ background; they are not causes, causal effects, or evidence that an
 intervention will work. Model churn scores are not claimed to be calibrated
 probabilities. The saved pipelines, preprocessing, and validation-selected
 thresholds are not retrained or changed for explanations.
+
+### Retention Intelligence
+
+The **Retention Intelligence** page uses the existing prediction stored for the
+most recently scored individual customer. It does not rescore that customer,
+regenerate a SHAP explanation, or use the historical `Churn` label. The
+rule-based engine may display these review prompts:
+
+| Trigger | Review prompt |
+| --- | --- |
+| Predicted class is `Churn` and tenure is from 0 through 12 months | Review onboarding and service fit |
+| Contract is `Month-to-month` | Discuss available contract options |
+| Internet service is DSL or Fiber optic and `TechSupport` is `No` | Review technical support needs |
+| Internet service is DSL or Fiber optic and `OnlineSecurity` is `No` | Review security needs |
+
+Each prompt includes the fields that triggered it and a suggested review
+action. Missing or unexpected categorical values do not trigger the relevant
+rule. Demographic fields do not trigger recommendations. These are review
+prompts, not proven causal interventions or guaranteed churn-prevention
+outcomes.
+
+## Testing
+
+Run the unit test suite and the dashboard smoke test from the project root:
+
+```powershell
+python -m pytest -v
+python tests/smoke_test_app.py
+```
+
+The smoke test requires the configured authentication secrets. The latest
+completed validation results are **42 tests passed and 32 subtests passed**;
+the dashboard smoke test also passed, including authentication, all seven
+pages, bulk report download, and logout cleanup.
+
+## Limitations
+
+- Model churn scores are not necessarily calibrated probabilities.
+- SHAP values describe model attributions relative to a training background;
+  they do not prove causes or causal effects.
+- Retention recommendations are transparent, rule-based review prompts, not
+  proven or guaranteed interventions.
+- Bulk CSV predictions currently provide scores, classes, and risk ranks, but
+  do not provide individual retention recommendations.
+- Cost assumptions are illustrative and are not measured company costs,
+  realized savings, or real-world ROI estimates.
