@@ -34,6 +34,7 @@ RetainIQ solves this by introducing a **cost-sensitive evaluation framework**. I
 ## 🛠️ Technologies Used
 * **Programming Language:** Python
 * **Data Processing & ML:** Pandas, NumPy, Scikit-Learn
+* **Explainability:** SHAP PermutationExplainer
 * **Model Storage:** Joblib
 * **Frontend & Visualization:** Streamlit, Plotly
 
@@ -80,6 +81,7 @@ RetainIQ/
 │   ├── bulk_prediction.py
 │   ├── train_models.py
 │   ├── evaluation.py
+│   ├── explainability.py
 │   └── __init__.py
 │
 ├── app.py
@@ -93,7 +95,7 @@ RetainIQ/
 ### 1. Install Dependencies
 Open your terminal in the project root folder and install the required packages:
 ```powershell
-python -m pip install pandas numpy scikit-learn plotly streamlit joblib
+python -m pip install -r requirements.txt
 ```
 
 ### Saved-model prediction service
@@ -165,3 +167,20 @@ they are not written to disk or a database and are cleared when a new scoring
 attempt begins or the user logs out. Exported text fields that could be
 interpreted as spreadsheet formulas are prefixed with an apostrophe in the CSV
 only. This does not change model inputs or the displayed prediction results.
+
+### Individual score explanations
+
+The **Customer Churn Prediction** page can generate an explanation for the
+most recently scored customer when **Generate explanation** is clicked. It uses
+the selected saved pipeline and the shared prediction service; explanations
+are not generated for every row in a bulk upload. The model churn score, its
+saved decision threshold, predicted class, SHAP base value, and per-feature
+contributions are displayed separately.
+
+SHAP contributions use the 19 raw input features and a deterministic
+20-customer background sampled only from the reconstructed training split.
+They describe how the model attributes movement in its score relative to that
+background; they are not causes, causal effects, or evidence that an
+intervention will work. Model churn scores are not claimed to be calibrated
+probabilities. The saved pipelines, preprocessing, and validation-selected
+thresholds are not retrained or changed for explanations.

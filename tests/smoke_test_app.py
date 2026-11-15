@@ -85,7 +85,27 @@ def test_dashboard():
             form_button.click().run()
             assert not at.exception, f"Exception on prediction submit: {at.exception}"
             assert not at.error, f"st.error on prediction submit: {[e.value for e in at.error]}"
-            print("  ✓ Form submission produced prediction results without errors.")
+            assert any(
+                button.label == "Generate explanation" for button in at.button
+            ), "The on-demand explanation button is missing after scoring."
+            assert not any(
+                "SHAP feature contributions" in item.value for item in at.subheader
+            ), "SHAP was rendered before the user requested an explanation."
+            explanation_button = next(
+                button for button in at.button if button.label == "Generate explanation"
+            )
+            explanation_button.click().run()
+            assert not at.exception, f"Exception on explanation generation: {at.exception}"
+            assert not at.error, (
+                f"st.error on explanation generation: {[e.value for e in at.error]}"
+            )
+            assert any(
+                "SHAP feature contributions" in item.value for item in at.subheader
+            ), "The requested customer explanation was not displayed."
+            assert any(
+                "Model Churn Score" in item.label for item in at.metric
+            ), "The model churn score metric is missing."
+            print("  ✓ Prediction and on-demand explanation work without errors.")
 
         elif page_name == "Cost Calculator":
             print("  Testing cost calculator with modified inputs...")
@@ -147,6 +167,8 @@ def test_dashboard():
     assert not at.exception, f"Exception on logout: {at.exception}"
     assert any("Welcome Back" in item.value for item in at.markdown), "Logout did not return to login."
     for key in (REPORT_STATE_KEY, REPORT_CSV_STATE_KEY, REPORT_FILENAME_STATE_KEY):
+        assert key not in at.session_state, f"Logout did not clear {key}."
+    for key in ("ri_individual_prediction", "ri_individual_explanation"):
         assert key not in at.session_state, f"Logout did not clear {key}."
     at.run()
     assert any("Welcome Back" in item.value for item in at.markdown), "Login screen did not persist after rerun."

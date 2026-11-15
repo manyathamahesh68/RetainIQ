@@ -19,7 +19,17 @@ from src.bulk_prediction import (
     score_customer_csv,
     store_bulk_report,
 )
-from src.prediction_service import PredictionAssets, PredictionInputError
+from src.explainability import (
+    CustomerExplanation,
+    ExplainabilityError,
+    build_training_background,
+    explain_customer,
+)
+from src.prediction_service import (
+    PredictionAssets,
+    PredictionInputError,
+    predict_customers,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -32,6 +42,8 @@ MODEL_FILES = {
     "Gradient Boosting": "gradient_boosting.pkl",
     "Neural Network": "neural_network.pkl",
 }
+INDIVIDUAL_PREDICTION_STATE_KEY = "ri_individual_prediction"
+INDIVIDUAL_EXPLANATION_STATE_KEY = "ri_individual_explanation"
 CHART_COLORS = ["#3B82F6", "#22D3EE", "#8B5CF6", "#34D399"]
 NAVY = "#0B1120"
 PANEL = "#162338"
@@ -673,6 +685,11 @@ def load_models():
     return loaded_models, None
 
 
+@st.cache_data
+def load_explanation_background():
+    return build_training_background()
+
+
 def metric_value(metrics, key):
     value = metrics.get(key)
     return float(value) if value is not None else 0.0
@@ -707,6 +724,8 @@ if st.sidebar.button("↪  Log out", use_container_width=True):
     st.session_state.pop("ri_login_password", None)
     st.session_state.pop("ri_show_password", None)
     clear_bulk_report_state(st.session_state)
+    st.session_state.pop(INDIVIDUAL_PREDICTION_STATE_KEY, None)
+    st.session_state.pop(INDIVIDUAL_EXPLANATION_STATE_KEY, None)
     st.rerun()
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
@@ -970,6 +989,8 @@ elif page == "Customer Churn Prediction":
         submitted = st.form_submit_button("Score customer", use_container_width=True)
 
     if submitted:
+        st.session_state.pop(INDIVIDUAL_PREDICTION_STATE_KEY, None)
+        st.session_state.pop(INDIVIDUAL_EXPLANATION_STATE_KEY, None)
         validation_errors = []
         if phone_service == "No" and multiple_lines != "No phone service":
             validation_errors.append("Select “No phone service” for multiple lines when phone service is No.")
@@ -1021,98 +1042,194 @@ elif page == "Customer Churn Prediction":
             )
             model = models[selected_model_name]
             if not callable(getattr(model, "predict_proba", None)):
-                st.error(f"{selected_model_name} does not support probability predictions.")
+                st.error(f"{selected_model_name} does not support score predictions.")
                 st.stop()
-            probabilities = model.predict_proba(input_data)
-            class_labels = list(model.classes_)
-            if 1 not in class_labels:
-                st.error(f"{selected_model_name} has no churn class (1) in its trained classes.")
+            model_evaluation = eval_data["models"][selected_model_name]
+            saved_threshold = model_evaluation.get("threshold")
+            if (
+                isinstance(saved_threshold, bool)
+                or not isinstance(saved_threshold, (int, float))
+                or not np.isfinite(saved_threshold)
+                or not 0.0 <= saved_threshold <= 1.0
+            ):
+                st.error(f"No valid saved threshold is available for {selected_model_name}.")
                 st.stop()
-            probability = float(probabilities[0, class_labels.index(1)])
-            threshold = float(eval_data["models"][selected_model_name]["threshold"])
-            predicted_churn = probability >= threshold
 
-            st.markdown("---")
-            st.subheader("Prediction result")
-            with st.container(key="prediction-result-panel", border=True):
-                metric_cols = st.columns(3, gap="large")
-                with metric_cols[0]:
-                    st.metric("Churn probability", f"{probability:.1%}")
-                with metric_cols[1]:
-                    st.metric("Saved decision threshold", f"{threshold:.2f}")
-                with metric_cols[2]:
-                    st.metric("Predicted class", "Churn" if predicted_churn else "Retained")
+            prediction_assets = PredictionAssets(
+                models=models,
+                thresholds={selected_model_name: float(saved_threshold)},
+            )
+            try:
+                batch = predict_customers(
+                    input_data,
+                    selected_model_name,
+                    prediction_assets,
+                )
+            except PredictionInputError as error:
+                st.error(f"Could not score this customer. {error}")
+                st.stop()
 
-                result_left, result_right = st.columns([1, 1.2], gap="large")
-                with result_left:
-                    st.progress(probability, text="Estimated churn probability")
-                    if predicted_churn:
-                        st.warning("Above threshold · prioritize for retention review")
-                    else:
-                        st.success("Below threshold · lower model-indicated priority")
-                    st.caption(
-                        "This is a model score, not a guarantee of future behavior or proof that a retention action will work."
-                    )
-                with result_right:
-                    gauge = go.Figure(
-                        go.Indicator(
-                            mode="gauge+number",
-                            value=probability * 100,
-                            number={"suffix": "%", "font": {"size": 34, "color": TEXT}},
-                            title={"text": "Estimated churn probability", "font": {"color": MUTED, "size": 15}},
-                            gauge={
-                                "axis": {"range": [0, 100], "ticksuffix": "%", "tickcolor": MUTED},
-                                "bar": {"color": "#2563eb", "thickness": 0.25},
-                                "bgcolor": "#1C2B42",
-                                "borderwidth": 0,
-                                "steps": [
-                                    {"range": [0, threshold * 100], "color": "rgba(34,211,238,.15)"},
-                                    {"range": [threshold * 100, 100], "color": "rgba(139,92,246,.16)"},
-                                ],
-                                "threshold": {
-                                    "line": {"color": "#22D3EE", "width": 4},
-                                    "thickness": 0.8,
-                                    "value": threshold * 100,
-                                },
-                            },
-                        )
-                    )
-                    gauge.update_layout(
-                        height=290,
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font={"color": TEXT},
-                        margin=dict(l=28, r=28, t=48, b=10),
-                    )
-                    st.plotly_chart(gauge, width="stretch", config={"displayModeBar": False})
+            churn_score = float(batch.results["churn_probability"].iloc[0])
+            saved_threshold = float(batch.results["threshold"].iloc[0])
+            predicted_class = str(batch.results["predicted_class"].iloc[0])
+            st.session_state[INDIVIDUAL_PREDICTION_STATE_KEY] = {
+                "customer_rows": input_data.copy(deep=True),
+                "model_name": selected_model_name,
+                "churn_score": churn_score,
+                "saved_threshold": saved_threshold,
+                "predicted_class": predicted_class,
+            }
 
-            model_result = eval_data["models"][selected_model_name]
-            importance = model_result.get("permutation_importance", {})
-            if importance:
-                top_features = sorted(
-                    importance.items(), key=lambda item: item[1]["mean"], reverse=True
-                )[:5]
-                st.markdown("#### Model context")
+    prediction_state = st.session_state.get(INDIVIDUAL_PREDICTION_STATE_KEY)
+    if isinstance(prediction_state, dict):
+        model_name = prediction_state["model_name"]
+        customer_rows = prediction_state["customer_rows"]
+        churn_score = prediction_state["churn_score"]
+        saved_threshold = prediction_state["saved_threshold"]
+        predicted_class = prediction_state["predicted_class"]
+
+        st.markdown("---")
+        st.subheader("Prediction result")
+        st.caption(f"Showing the last successful score from {model_name}.")
+        with st.container(key="prediction-result-panel", border=True):
+            metric_cols = st.columns(3, gap="large")
+            with metric_cols[0]:
+                st.metric("Model Churn Score", f"{churn_score:.3f}")
+            with metric_cols[1]:
+                st.metric("Saved decision threshold", f"{saved_threshold:.2f}")
+            with metric_cols[2]:
+                st.metric("Predicted class", predicted_class)
+
+            result_left, result_right = st.columns([1, 1.2], gap="large")
+            with result_left:
+                st.progress(churn_score, text="Model churn score (0–1 scale)")
+                if predicted_class == "Churn":
+                    st.warning("Above threshold · higher model-indicated priority")
+                else:
+                    st.success("Below threshold · lower model-indicated priority")
                 st.caption(
-                    "Top global permutation-importance features for this model on validation data. "
-                    "These describe overall model behavior, not the reasons for this individual score."
+                    "This model score is not a guarantee of future behavior or proof that a retention action will work."
                 )
-                importance_df = pd.DataFrame(
-                    [
-                        {"Feature": feature, "Importance": values["mean"]}
-                        for feature, values in top_features
-                    ]
+            with result_right:
+                gauge = go.Figure(
+                    go.Indicator(
+                        mode="gauge+number",
+                        value=churn_score,
+                        number={"valueformat": ".3f", "font": {"size": 34, "color": TEXT}},
+                        title={"text": "Model churn score", "font": {"color": MUTED, "size": 15}},
+                        gauge={
+                            "axis": {"range": [0, 1], "tickcolor": MUTED},
+                            "bar": {"color": "#2563eb", "thickness": 0.25},
+                            "bgcolor": "#1C2B42",
+                            "borderwidth": 0,
+                            "steps": [
+                                {"range": [0, saved_threshold], "color": "rgba(34,211,238,.15)"},
+                                {"range": [saved_threshold, 1], "color": "rgba(139,92,246,.16)"},
+                            ],
+                            "threshold": {
+                                "line": {"color": "#22D3EE", "width": 4},
+                                "thickness": 0.8,
+                                "value": saved_threshold,
+                            },
+                        },
+                    )
                 )
-                fig = px.bar(
-                    importance_df.sort_values("Importance"),
-                    x="Importance",
-                    y="Feature",
-                    orientation="h",
-                    color="Importance",
-                    color_continuous_scale=["#a7ded9", "#2563eb"],
+                gauge.update_layout(
+                    height=290,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font={"color": TEXT},
+                    margin=dict(l=28, r=28, t=48, b=10),
                 )
-                fig.update_layout(coloraxis_showscale=False)
-                chart_layout(fig, 280)
-                st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+                st.plotly_chart(gauge, width="stretch", config={"displayModeBar": False})
+
+        st.markdown("#### Individual feature attribution")
+        st.caption(
+            "Generate SHAP contributions for this score on demand. Contributions describe "
+            "model-score attribution relative to a fixed training background; they are not causes."
+        )
+        if st.button(
+            "Generate explanation",
+            use_container_width=True,
+            key="generate_customer_explanation",
+        ):
+            st.session_state.pop(INDIVIDUAL_EXPLANATION_STATE_KEY, None)
+            prediction_assets = PredictionAssets(
+                models=models,
+                thresholds={model_name: saved_threshold},
+            )
+            try:
+                with st.spinner("Generating this customer's feature attribution..."):
+                    explanation = explain_customer(
+                        customer_rows,
+                        model_name,
+                        prediction_assets,
+                        load_explanation_background(),
+                        expected_churn_score=churn_score,
+                    )
+                st.session_state[INDIVIDUAL_EXPLANATION_STATE_KEY] = explanation
+            except (
+                ExplainabilityError,
+                PredictionInputError,
+                OSError,
+                ValueError,
+            ) as error:
+                st.error(f"Could not generate the explanation. {error}")
+
+        explanation = st.session_state.get(INDIVIDUAL_EXPLANATION_STATE_KEY)
+        if isinstance(explanation, CustomerExplanation):
+            st.subheader("SHAP feature contributions")
+            explanation_metrics = st.columns(4, gap="large")
+            explanation_metrics[0].metric("Model Churn Score", f"{churn_score:.3f}")
+            explanation_metrics[1].metric("Saved threshold", f"{saved_threshold:.2f}")
+            explanation_metrics[2].metric("Predicted class", predicted_class)
+            explanation_metrics[3].metric("Base value", f"{explanation.base_value:.3f}")
+            st.caption(
+                "Positive contributions raise the model score relative to the training "
+                "background; negative contributions lower it. This is feature attribution, "
+                "not causation. The score is not described as calibrated."
+            )
+            contribution_table = explanation.contributions.sort_values(
+                "SHAP contribution",
+                key=lambda values: values.abs(),
+                ascending=False,
+            ).copy()
+            contribution_table["Customer value"] = contribution_table[
+                "Customer value"
+            ].map(lambda value: "Missing" if pd.isna(value) else str(value))
+            st.dataframe(
+                contribution_table,
+                width="stretch",
+                hide_index=True,
+            )
+
+        model_result = eval_data["models"][model_name]
+        importance = model_result.get("permutation_importance", {})
+        if importance:
+            top_features = sorted(
+                importance.items(), key=lambda item: item[1]["mean"], reverse=True
+            )[:5]
+            st.markdown("#### Model context")
+            st.caption(
+                "Top global permutation-importance features for this model on validation data. "
+                "These describe overall model behavior, not the attribution for this individual score."
+            )
+            importance_df = pd.DataFrame(
+                [
+                    {"Feature": feature, "Importance": values["mean"]}
+                    for feature, values in top_features
+                ]
+            )
+            fig = px.bar(
+                importance_df.sort_values("Importance"),
+                x="Importance",
+                y="Feature",
+                orientation="h",
+                color="Importance",
+                color_continuous_scale=["#a7ded9", "#2563eb"],
+            )
+            fig.update_layout(coloraxis_showscale=False)
+            chart_layout(fig, 280)
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 elif page == "Model Comparison":
