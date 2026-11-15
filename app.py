@@ -14,8 +14,10 @@ from streamlit.errors import StreamlitSecretNotFoundError
 
 from src.bulk_prediction import (
     BulkCsvError,
-    format_bulk_results,
+    clear_bulk_report_state,
+    get_stored_bulk_report,
     score_customer_csv,
+    store_bulk_report,
 )
 from src.prediction_service import PredictionAssets, PredictionInputError
 
@@ -704,6 +706,7 @@ if st.sidebar.button("↪  Log out", use_container_width=True):
     st.session_state.pop("ri_login_email", None)
     st.session_state.pop("ri_login_password", None)
     st.session_state.pop("ri_show_password", None)
+    clear_bulk_report_state(st.session_state)
     st.rerun()
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
@@ -1598,6 +1601,7 @@ elif page == "Bulk CSV Prediction":
         submitted = st.form_submit_button("Score customers", use_container_width=True)
 
     if submitted:
+        clear_bulk_report_state(st.session_state)
         if uploaded_file is None:
             st.error("Upload a customer CSV before scoring.")
             st.stop()
@@ -1639,14 +1643,32 @@ elif page == "Bulk CSV Prediction":
                 f"Missing cells: {missing_summary}."
             )
 
-        display_results = format_bulk_results(batch)
+        store_bulk_report(st.session_state, batch, selected_model_name)
+
+    stored_report = get_stored_bulk_report(st.session_state)
+    if stored_report is not None:
+        display_results, csv_bytes, filename = stored_report
         metric_columns = st.columns(3)
         metric_columns[0].metric("Customers scored", len(display_results))
-        metric_columns[1].metric("Selected model", selected_model_name)
-        metric_columns[2].metric("Saved threshold", f"{threshold:.2f}")
+        metric_columns[1].metric(
+            "Selected model",
+            display_results["Selected model"].iloc[0],
+        )
+        metric_columns[2].metric(
+            "Saved threshold",
+            f"{display_results['Saved threshold'].iloc[0]:.2f}",
+        )
         st.caption("Risk rank 1 is the highest model churn score. Results remain in original CSV row order.")
         st.dataframe(
             display_results,
             width="stretch",
             hide_index=True,
+        )
+        st.download_button(
+            "Download CSV",
+            data=csv_bytes,
+            file_name=filename,
+            mime="text/csv",
+            use_container_width=True,
+            key="bulk_prediction_download",
         )

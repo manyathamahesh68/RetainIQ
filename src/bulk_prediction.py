@@ -4,16 +4,35 @@ from __future__ import annotations
 
 import csv
 import io
+import unicodedata
 from collections import Counter
+from collections.abc import MutableMapping
 
 import pandas as pd
 
 from src.prediction_service import (
     ID_COLUMN,
+    MODEL_NAMES,
     PredictionAssets,
     PredictionBatch,
     predict_customers,
 )
+
+REPORT_STATE_KEY = "bulk_prediction_report"
+REPORT_CSV_STATE_KEY = "bulk_prediction_csv"
+REPORT_FILENAME_STATE_KEY = "bulk_prediction_filename"
+REPORT_STATE_KEYS = (
+    REPORT_STATE_KEY,
+    REPORT_CSV_STATE_KEY,
+    REPORT_FILENAME_STATE_KEY,
+)
+
+_MODEL_FILENAME_SLUGS = {
+    "Logistic Regression": "logistic_regression",
+    "Random Forest": "random_forest",
+    "Gradient Boosting": "gradient_boosting",
+    "Neural Network": "neural_network",
+}
 
 
 class BulkCsvError(ValueError):
@@ -98,11 +117,13 @@ def score_customer_csv(
 def format_bulk_results(batch: PredictionBatch) -> pd.DataFrame:
     """Add customer identifiers and stable score ranks without reordering rows."""
     results = batch.results.copy()
+    row_numbers = results.index.to_numpy(copy=True)
     if ID_COLUMN in results.columns:
         identifiers = results.pop(ID_COLUMN)
     else:
-        identifiers = pd.Series(results.index, index=results.index)
+        identifiers = pd.Series(row_numbers, index=results.index)
     results.insert(0, "Customer identifier", identifiers.to_numpy())
+    results.insert(1, "Original row number", row_numbers)
     results["Risk rank"] = (
         results["churn_probability"].rank(method="first", ascending=False).astype(int)
     )
@@ -119,12 +140,77 @@ def format_bulk_results(batch: PredictionBatch) -> pd.DataFrame:
             :,
             [
                 "Customer identifier",
-                "Risk rank",
+                "Original row number",
                 "Selected model",
                 "Saved threshold",
                 "Model churn score",
                 "Predicted class",
+                "Risk rank",
             ],
         ]
         .reset_index(drop=True)
     )
+
+
+def _is_formula_text(value: str) -> bool:
+    for character in value:
+        if character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}:
+            continue
+        return character in "=+-@"
+    return False
+
+
+def serialize_bulk_report(report: pd.DataFrame) -> bytes:
+    """Serialize a formula-safe copy without changing the displayed report."""
+    export_report = report.copy(deep=True)
+    for column in export_report.columns:
+        export_report[column] = export_report[column].map(
+            lambda value: f"'{value}"
+            if isinstance(value, str) and _is_formula_text(value)
+            else value
+        )
+    return export_report.to_csv(index=False).encode("utf-8-sig")
+
+
+def bulk_report_filename(model_name: str) -> str:
+    """Return a fixed filename for a supported saved model."""
+    if model_name not in MODEL_NAMES:
+        raise ValueError(f"Unsupported prediction model: {model_name}")
+    return f"retainiq_bulk_predictions_{_MODEL_FILENAME_SLUGS[model_name]}.csv"
+
+
+def clear_bulk_report_state(session_state: MutableMapping[str, object]) -> None:
+    """Remove the previous report, its CSV bytes, and its filename."""
+    for key in REPORT_STATE_KEYS:
+        session_state.pop(key, None)
+
+
+def store_bulk_report(
+    session_state: MutableMapping[str, object],
+    batch: PredictionBatch,
+    model_name: str,
+) -> None:
+    """Store one scored report and its pre-generated CSV in session memory."""
+    report = format_bulk_results(batch)
+    csv_bytes = serialize_bulk_report(report)
+    filename = bulk_report_filename(model_name)
+
+    session_state[REPORT_STATE_KEY] = report
+    session_state[REPORT_CSV_STATE_KEY] = csv_bytes
+    session_state[REPORT_FILENAME_STATE_KEY] = filename
+
+
+def get_stored_bulk_report(
+    session_state: MutableMapping[str, object],
+) -> tuple[pd.DataFrame, bytes, str] | None:
+    """Read the complete report tuple from session memory, if available."""
+    report = session_state.get(REPORT_STATE_KEY)
+    csv_bytes = session_state.get(REPORT_CSV_STATE_KEY)
+    filename = session_state.get(REPORT_FILENAME_STATE_KEY)
+    if (
+        isinstance(report, pd.DataFrame)
+        and isinstance(csv_bytes, bytes)
+        and isinstance(filename, str)
+    ):
+        return report, csv_bytes, filename
+    return None

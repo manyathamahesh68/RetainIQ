@@ -151,4 +151,17 @@ the risk-rank column sorts scores conceptually, with earlier rows winning ties.
 When `customerID` is absent, the customer identifier column uses the
 one-based CSV data-row number (excluding the header). Model churn scores are
 not claimed to be calibrated probabilities, and no retention savings are
-estimated. CSV downloads are not part of this phase.
+estimated.
+
+After scoring, **Download CSV** exports the existing results without running
+predictions again. The report includes the customer identifier, original
+one-based row number, selected model, saved threshold, model churn score,
+predicted class, and risk rank, in original input order. The filename is
+model-specific, for example
+`retainiq_bulk_predictions_logistic_regression.csv`.
+
+The report and its pre-generated CSV are held in Streamlit session memory only;
+they are not written to disk or a database and are cleared when a new scoring
+attempt begins or the user logs out. Exported text fields that could be
+interpreted as spreadsheet formulas are prefixed with an apostrophe in the CSV
+only. This does not change model inputs or the displayed prediction results.

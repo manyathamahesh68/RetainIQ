@@ -1,5 +1,7 @@
 import sys
 from pathlib import Path
+
+import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 from streamlit.testing.v1 import AppTest
@@ -20,6 +22,15 @@ def get_test_credentials():
 
 
 def test_dashboard():
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from src.bulk_prediction import (
+        REPORT_CSV_STATE_KEY,
+        REPORT_FILENAME_STATE_KEY,
+        REPORT_STATE_KEY,
+    )
+    from src.preprocessing import DATA_PATH, TARGET_COLUMN
+
     email, password = get_test_credentials()
     print(f"Loading AppTest from: {APP_PATH}")
     at = AppTest.from_file(str(APP_PATH), default_timeout=30)
@@ -106,11 +117,37 @@ def test_dashboard():
             assert any("Upload a customer CSV" in item.value for item in at.error), (
                 "Empty bulk submission did not show an understandable error."
             )
-            print("  ✓ Bulk CSV upload page rendered successfully.")
+            customer_csv = (
+                pd.read_csv(DATA_PATH)
+                .drop(columns=[TARGET_COLUMN])
+                .iloc[:1]
+                .to_csv(index=False)
+                .encode("utf-8")
+            )
+            at.file_uploader[0].upload(
+                "smoke_customers.csv",
+                customer_csv,
+                "text/csv",
+            )
+            at.form[0].button[0].click().run()
+            assert not at.exception, f"Exception after bulk scoring: {at.exception}"
+            assert not at.error, f"st.error after bulk scoring: {[e.value for e in at.error]}"
+            assert at.download_button, "Bulk prediction CSV download button is missing."
+            assert at.download_button[0].label == "Download CSV", (
+                "The bulk prediction download button has an unexpected label."
+            )
+            assert at.session_state[REPORT_CSV_STATE_KEY], (
+                "Pre-generated CSV bytes were not stored."
+            )
+            assert at.session_state[REPORT_FILENAME_STATE_KEY].endswith(".csv")
+            assert not at.session_state[REPORT_STATE_KEY].empty
+            print("  ✓ Bulk CSV scoring and report download control work.")
 
     at.sidebar.button[0].click().run()
     assert not at.exception, f"Exception on logout: {at.exception}"
     assert any("Welcome Back" in item.value for item in at.markdown), "Logout did not return to login."
+    for key in (REPORT_STATE_KEY, REPORT_CSV_STATE_KEY, REPORT_FILENAME_STATE_KEY):
+        assert key not in at.session_state, f"Logout did not clear {key}."
     at.run()
     assert any("Welcome Back" in item.value for item in at.markdown), "Login screen did not persist after rerun."
     print("✓ Logout returns to login and unauthenticated rerun stays on login.")
