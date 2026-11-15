@@ -59,12 +59,22 @@ def test_dashboard():
     assert not at.exception, f"Dashboard session did not survive rerun: {at.exception}"
     print("✓ Valid login opens the dashboard and session persists on rerun.")
 
+    at.sidebar.radio[0].set_value("Retention Intelligence").run()
+    assert not at.exception, f"Exception on empty Retention Intelligence page: {at.exception}"
+    assert any(
+        "Visit Customer Churn Prediction first." in item.value for item in at.info
+    ), "Retention Intelligence did not explain how to get a customer result."
+    assert "ri_retention_recommendations" not in at.session_state, (
+        "Recommendations were stored without a scored individual customer."
+    )
+
     pages = [
         "Overview",
         "Customer Churn Prediction",
         "Model Comparison",
         "Cost Calculator",
         "Customer Insights",
+        "Retention Intelligence",
         "Bulk CSV Prediction",
     ]
 
@@ -163,12 +173,44 @@ def test_dashboard():
             assert not at.session_state[REPORT_STATE_KEY].empty
             print("  ✓ Bulk CSV scoring and report download control work.")
 
+        elif page_name == "Retention Intelligence":
+            recommendation_result = at.session_state.get("ri_retention_recommendations")
+            assert recommendation_result is not None, (
+                "Retention recommendations were not stored for the scored customer."
+            )
+            titles = [
+                recommendation.title
+                for recommendation in recommendation_result.recommendations
+            ]
+            assert "Discuss available contract options" in titles, (
+                "The month-to-month contract review prompt did not appear."
+            )
+            assert "Review technical support needs" in titles, (
+                "The technical support review prompt did not appear."
+            )
+            assert "Review security needs" in titles, (
+                "The security review prompt did not appear."
+            )
+            assert any(
+                item.label == "Model Churn Score" for item in at.metric
+            ), "The existing Model Churn Score was not displayed."
+            assert any(
+                recommendation.disclaimer
+                == "This is a review prompt, not a proven churn-prevention intervention."
+                for recommendation in recommendation_result.recommendations
+            ), "Recommendation disclaimer is missing."
+            print("  ✓ Matching review prompts use the existing scored customer.")
+
     at.sidebar.button[0].click().run()
     assert not at.exception, f"Exception on logout: {at.exception}"
     assert any("Welcome Back" in item.value for item in at.markdown), "Logout did not return to login."
     for key in (REPORT_STATE_KEY, REPORT_CSV_STATE_KEY, REPORT_FILENAME_STATE_KEY):
         assert key not in at.session_state, f"Logout did not clear {key}."
-    for key in ("ri_individual_prediction", "ri_individual_explanation"):
+    for key in (
+        "ri_individual_prediction",
+        "ri_individual_explanation",
+        "ri_retention_recommendations",
+    ):
         assert key not in at.session_state, f"Logout did not clear {key}."
     at.run()
     assert any("Welcome Back" in item.value for item in at.markdown), "Login screen did not persist after rerun."

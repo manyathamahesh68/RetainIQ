@@ -30,6 +30,8 @@ from src.prediction_service import (
     PredictionInputError,
     predict_customers,
 )
+from src.preprocessing import ID_COLUMN
+from src.retention_engine import generate_retention_recommendations
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -44,6 +46,7 @@ MODEL_FILES = {
 }
 INDIVIDUAL_PREDICTION_STATE_KEY = "ri_individual_prediction"
 INDIVIDUAL_EXPLANATION_STATE_KEY = "ri_individual_explanation"
+RETENTION_RECOMMENDATION_STATE_KEY = "ri_retention_recommendations"
 CHART_COLORS = ["#3B82F6", "#22D3EE", "#8B5CF6", "#34D399"]
 NAVY = "#0B1120"
 PANEL = "#162338"
@@ -726,6 +729,7 @@ if st.sidebar.button("↪  Log out", use_container_width=True):
     clear_bulk_report_state(st.session_state)
     st.session_state.pop(INDIVIDUAL_PREDICTION_STATE_KEY, None)
     st.session_state.pop(INDIVIDUAL_EXPLANATION_STATE_KEY, None)
+    st.session_state.pop(RETENTION_RECOMMENDATION_STATE_KEY, None)
     st.rerun()
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
@@ -736,6 +740,7 @@ page = st.sidebar.radio(
         "Model Comparison",
         "Cost Calculator",
         "Customer Insights",
+        "Retention Intelligence",
         "Bulk CSV Prediction",
     ],
     format_func=lambda label: {
@@ -744,6 +749,7 @@ page = st.sidebar.radio(
         "Model Comparison": "▥  Model Comparison",
         "Cost Calculator": "＄  Cost Calculator",
         "Customer Insights": "⌁  Customer Insights",
+        "Retention Intelligence": "✦  Retention Intelligence",
         "Bulk CSV Prediction": "⇧  Bulk CSV Prediction",
     }[label],
     label_visibility="collapsed",
@@ -991,6 +997,7 @@ elif page == "Customer Churn Prediction":
     if submitted:
         st.session_state.pop(INDIVIDUAL_PREDICTION_STATE_KEY, None)
         st.session_state.pop(INDIVIDUAL_EXPLANATION_STATE_KEY, None)
+        st.session_state.pop(RETENTION_RECOMMENDATION_STATE_KEY, None)
         validation_errors = []
         if phone_service == "No" and multiple_lines != "No phone service":
             validation_errors.append("Select “No phone service” for multiple lines when phone service is No.")
@@ -1681,6 +1688,86 @@ elif page == "Customer Insights":
         st.caption(
             "These are investigation ideas based on observed patterns, not proven interventions or predictions of ROI."
         )
+
+
+elif page == "Retention Intelligence":
+    page_heading(
+        "Customer review",
+        "Retention Intelligence",
+        "Use transparent review prompts for the most recently scored individual customer.",
+    )
+    st.info(
+        "Recommendations are review prompts, not proven churn-prevention interventions. "
+        "They do not establish causes or predict retention savings."
+    )
+
+    prediction_state = st.session_state.get(INDIVIDUAL_PREDICTION_STATE_KEY)
+    if (
+        not isinstance(prediction_state, dict)
+        or not isinstance(prediction_state.get("customer_rows"), pd.DataFrame)
+    ):
+        st.session_state.pop(RETENTION_RECOMMENDATION_STATE_KEY, None)
+        st.info(
+            "No individual customer has been scored in this session. "
+            "Visit Customer Churn Prediction first."
+        )
+    else:
+        customer_rows = prediction_state["customer_rows"]
+        model_name = prediction_state["model_name"]
+        saved_threshold = prediction_state["saved_threshold"]
+        if ID_COLUMN in customer_rows.columns:
+            customer_identifier = customer_rows[ID_COLUMN].iloc[0]
+            if pd.isna(customer_identifier) or (
+                isinstance(customer_identifier, str) and not customer_identifier.strip()
+            ):
+                customer_identifier = "Not available"
+        else:
+            customer_identifier = "Not supplied"
+
+        try:
+            recommendation_result = generate_retention_recommendations(
+                customer_rows,
+                prediction_state["predicted_class"],
+                prediction_state["churn_score"],
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            st.session_state.pop(RETENTION_RECOMMENDATION_STATE_KEY, None)
+            st.error(f"Could not generate review prompts from the stored customer result. {error}")
+            st.stop()
+
+        st.session_state[RETENTION_RECOMMENDATION_STATE_KEY] = recommendation_result
+        metric_columns = st.columns(3, gap="large")
+        metric_columns[0].metric("Customer identifier", str(customer_identifier))
+        metric_columns[1].metric(
+            "Predicted class",
+            recommendation_result.predicted_class,
+        )
+        metric_columns[2].metric(
+            "Model Churn Score",
+            f"{recommendation_result.model_churn_score:.3f}",
+        )
+        st.caption(
+            f"Existing score from {escape(str(model_name))}; "
+            f"saved decision threshold {float(saved_threshold):.2f}. "
+            "No new score or threshold is calculated on this page."
+        )
+
+        st.subheader("Retention review prompts")
+        if recommendation_result.neutral_message:
+            st.info(recommendation_result.neutral_message)
+        else:
+            for recommendation in recommendation_result.recommendations:
+                with st.container(border=True):
+                    st.markdown(f"### {recommendation.title}")
+                    st.markdown(
+                        "**Triggered by customer fields:** "
+                        f"{escape(recommendation.trigger_explanation)}"
+                    )
+                    st.markdown(
+                        "**Suggested review action:** "
+                        f"{escape(recommendation.suggested_action)}"
+                    )
+                    st.caption(recommendation.disclaimer)
 
 
 elif page == "Bulk CSV Prediction":
